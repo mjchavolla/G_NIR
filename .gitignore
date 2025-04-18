@@ -1,0 +1,29 @@
+# Python-generated files
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual environments
+.venv/
+env/
+venv/
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+README.md
+main.py
+
+config.json
+output_spectrum_001.txt
+flat_spectrum*.txt
+output_spectrum*.txt
+gaia_055000450000*_snr10_*.txt
+
+# VSCode & system-specific files
+.vscode/
+.python-version
+
+#folders
+stage_M2_OHP/
+outputs/
