@@ -1,39 +1,37 @@
 from pydantic import BaseModel, Field
 from typing import Tuple
 import json
+import logging
 
 class Parameters(BaseModel, frozen=True):
     """
     Class to handle simulations of parameters.
     """
+    #flat_spectrum.txt  dirac_spectrum.txt   gaia_055000450000.txt
+    input_file: str = "gaia_055000450000.txt"
+    num_output_spectra: int = Field(1, ge= 1)
+
     convert_units: bool = True 
+    
     apply_convolution: bool = True
     plot_convolution: bool = True  
-
-    apply_resampling: bool = True
-    plot_resampling: bool = True  
-
-    apply_rescaling: bool = True
-    plot_rescaling: bool = True 
-
-    apply_noise: bool = True  
-    plot_noise: bool = True  
-
-    
-    num_output_spectra: int = Field(1, ge= 1)
     resolving_power: int = Field(11500, ge= 1)
-    pixel_size: float = Field(0.25, gt=0)
-    resolving_power: int = 11500
     fwhm_wavelength: float = Field(0.75, gt=0)
 
-    reference_range: Tuple[float, float] = (8550, 8560)
-    snr: float = Field(50, gt=0)
+    apply_resampling: bool = True
+    plot_resampling: bool = True
+    pixel_size: float = Field(0.25, gt=0)
+
+    plot_rescaling: bool = True
+    reference_range: Tuple[float, float] = (8550, 8650)
+
+    plot_noise: bool = True
+    snr: float = Field(10, gt=0)
 
     def save_to_json(self, filename="config.json"):
         with open(filename, "w") as f:
             json.dump(self.model_dump(), f, indent=4)
-        print(f"[save_to_json] Parameters saved to '{filename}'")
-
+        logging.info(f"Parameters saved to '{filename}'")
 
     @classmethod
     def load_from_json(cls, filename="config.json"):
@@ -42,8 +40,12 @@ class Parameters(BaseModel, frozen=True):
                 data = json.load(f)
             return cls(**data) #instance like in C
         except FileNotFoundError:
-            print(f"[load_from_json] Error: File '{filename}' not found.")
+            logging.debug(f"Error: File '{filename}' not found.")
+
             return cls()
-        
-
-
+    
+    # Inside your Parameters class
+    def output_filename(self, index: int) -> str:
+        import os
+        base = os.path.splitext(os.path.basename(self.input_file))[0]
+        return f"{base}_snr{int(self.snr)}_{index+1:04d}.txt"

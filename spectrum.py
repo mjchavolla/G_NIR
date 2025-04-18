@@ -2,6 +2,8 @@ import numpy as np
 from scipy.interpolate import interp1d
 from scipy.ndimage import gaussian_filter1d
 import matplotlib.pyplot as plt
+import logging
+import os
 
 class Spectrum:
     """
@@ -32,16 +34,14 @@ class Spectrum:
         """
         Load input spectrum from a file and parse data.
         """
-        print(f"[load_spectrum] Loading spectrum from '{file_name}")
         try:
             data = np.loadtxt(file_name, skiprows=1)
             self.wavelength = data[:, 0]
             self.flux = data[:, 1]
-            print("[load_spectrum] Spectrum loaded correctly.") 
+            logging.info(f"Loaded spectrum from '{file_name}' successfully.")
             
         except Exception as e:
-            print(f"[load_spectrum] Error loading spectrum: {e}")
-
+            logging.error(f"[load_spectrum] Failed to load spectrum: {e}")
 
     def convert_units(self, parameters, target_unit="A"):
         """
@@ -52,18 +52,17 @@ class Spectrum:
             target_unit (str): The target unit for wavelength conversion. Default is Ångströms ("A").
                                Supports conversion from nm to Ångströms.
         """
-        if not parameters.convert_units:
-            print("[convert_units] Skipping unit conversion.")
-            return self  
-
+        mean_wavelength = np.mean(self.wavelength)
         if target_unit == "A":
+            if mean_wavelength > 1000:
+                logging.warning("Wavelengths appear to already be in Ångströms. Skipping conversion.")
+                return self
             self.wavelength *= 10
-            print("[convert_units] Converted units to Ångströms.")
+            logging.info("Converted units from nm to Ångströms.")
         else:
-            print(f"[convert_units] Warning: Unsupported target unit '{target_unit}'. No conversion applied.")
+            logging.warning(f"Unsupported target unit '{target_unit}'. No conversion applied.")
 
         return self
-
 
             
     def convolve_spectrum(self, parameters, apply_convolution=True, verbose=True):
@@ -75,43 +74,34 @@ class Spectrum:
             apply_convolution (bool): If True, applies convolution. If False, skips it.
             verbose (bool): If True, prints debugging details.
         """
-        if not parameters.apply_convolution:
-            print("[convolve_spectrum] Skipping convolution.")
-            return self
-
         original_spectrum = self.copy()
-
-        original_flux = self.flux.copy()
-        initial_flux = np.sum(original_flux)
+        initial_flux = np.sum(self.flux)
 
         fwhm_wavelength = np.mean(self.wavelength) / parameters.resolving_power
-        sigma_wavelength = fwhm_wavelength / 2.355  
+        sigma_wavelength = fwhm_wavelength / (2 * np.sqrt(2 * np.log(2)))
 
         lambda_step = np.mean(np.diff(self.wavelength))
         sigma_pixels = sigma_wavelength / lambda_step
 
-        print(f"[convolve_spectrum] Sigma wavelength units: {sigma_wavelength:.2f} Å, pixel units: {sigma_pixels:.2f}")
-
+        logging.info(f"Sigma wavelength units: {sigma_wavelength:.2f} Å, pixel units: {sigma_pixels:.2f}")
+        
         convolved_flux = gaussian_filter1d(self.flux, sigma_pixels, mode='nearest')
-
         self.flux = convolved_flux
 
-        final_flux = np.sum(convolved_flux)
+        final_flux = np.sum(self.flux)
         conservation_ratio = final_flux / initial_flux if initial_flux != 0 else 0
 
-        if verbose:
-            print("[convolve_spectrum] Gaussian convolution completed.")
-            print(f"[convolve_spectrum] Flux before & after convolution: {initial_flux:.3f} | {final_flux:.3f}")
-            print(f"[convolve_spectrum] Flux conservation ratio: {conservation_ratio:.6f}")
-            
+        logging.info("Gaussian convolution completed.")
+        logging.info(f"Flux before & after convolution: {initial_flux:.3f} | {final_flux:.3f}")
+        logging.info(f"[convolve_spectrum] Flux conservation ratio: {conservation_ratio:.6f}")
             
         if parameters.plot_convolution:
-            self.plot_comparison(reference_spectrum=original_spectrum, 
+            self.plot(reference_spectrum=original_spectrum, 
                              processed_label="Convolved Spectrum", processed_color="red", processed_linestyle="-", 
                              original_label="Original Spectrum", original_color="pink", original_linestyle="--")
         return self
 
- #calculate mean sampling , fisrt and last, central
+
 
     def resample_spectrum(self, parameters, verbose=True):
         """
@@ -121,10 +111,6 @@ class Spectrum:
             parameters (Parameters): Object containing simulation parameters, including pixel size.
             verbose (bool): If True, prints debugging information.
         """
-        if not parameters.apply_resampling:
-            print("[resample_spectrum] Skipping resampling.")
-            return self  
-        
         original_spectrum = self.copy()
 
         new_wavelength_grid = np.arange(self.wavelength[0], self.wavelength[-1], parameters.pixel_size)
@@ -135,22 +121,22 @@ class Spectrum:
         self.wavelength = new_wavelength_grid
         self.flux = resampled_flux
 
-        if verbose:
-            print(f"[resample_spectrum] Resampling completed.")
-            print(f"[resample_spectrum] First: {self.wavelength[0]:.2f} Å, Center:{np.mean(self.wavelength)} Å, Last: {self.wavelength[-1]:.2f} Å")
-            print(f"[resample_spectrum] Pixel size: {parameters.pixel_size:.2f} Å, New grid points: {len(self.wavelength)}")
+
+        logging.info(f"Resampling completed.")
+        logging.info(f"First: {self.wavelength[0]:.2f} Å, Center:{np.mean(self.wavelength)} Å, Last: {self.wavelength[-1]:.2f} Å")
+        logging.info(f"Pixel size: {parameters.pixel_size:.2f} Å, New grid points: {len(self.wavelength)}.")
 
         if parameters.plot_resampling:    
-            self.plot_comparison(reference_spectrum=original_spectrum, 
+            self.plot(reference_spectrum=original_spectrum, 
                              processed_label="Resampled Spectrum", processed_color="blue", processed_linestyle="-",
                              original_label="Original Spectrum", original_color="lightblue", original_linestyle="-", original_linewidth=5,processed_linewidth=0.7)
             
-            self.plot_comparison(reference_spectrum=original_spectrum, display_type="both",processed_color="blue", processed_linestyle="-",
+            self.plot(reference_spectrum=original_spectrum, display_type="both",processed_color="blue", processed_linestyle="-",
                              original_label="Original Spectrum", original_color="lightblue", original_linestyle="-", original_linewidth=5,processed_linewidth=0.7, zoom=(8550, 8650))
 
         return self
     
-    def plot_comparison(self, reference_spectrum=None, display_type="both", zoom=None,
+    def plot(self, reference_spectrum=None, display_type="both", zoom=None,
                         processed_label="Processed Spectrum", processed_color="red", processed_linestyle="-",
                         processed_linewidth=1.0, processed_zorder=2,
                         original_label="Original Spectrum", original_color="pink", original_linestyle="--",
@@ -212,43 +198,40 @@ class Spectrum:
         Args:
             reference_range (tuple): The wavelength range (min, max) to use for computing the reference level.
         """
-        if not parameters.apply_rescaling:
-            print("[convolve_spectrum] Skipping rescaling.")
-            return self
-        
         mask = (self.wavelength >= parameters.reference_range[0]) & (self.wavelength <= parameters.reference_range[1])
         selected_flux = self.flux[mask]
 
         if selected_flux.size == 0:
-            raise ValueError("[rescale_flux] Error: No flux values found.")
+            logging.error("No flux values found in reference range: %f %f. Skipping rescaling." % (parameters.reference_range[0], parameters.reference_range[1]))
+            logging.error("First and last wavelengh is: %f %f" % (self.wavelength[0], self.wavelength[-1]))
+            return self
+
 
         # Using 100th percentile for our synthetic spectra
         #For real spectra, percentile should depend on SNR.
         self.reference_flux = np.percentile(selected_flux, 100)
-        
+    
         self.flux = (self.flux / self.reference_flux) * (parameters.snr **2)  
-        
+
         #to check
         new_max_flux = np.max(self.flux[mask])
 
-        if verbose:
-            print(f"[rescale_flux] Reference flux level before : {self.reference_flux:.3f}")
-            print(f"[rescale_flux] Max flux after: {new_max_flux:.3f}")
-            print(f"[rescale_flux] Rescaling completed.")
-    
+        logging.info(f"Reference flux level before: {self.reference_flux:.3f}")
+        logging.info(f"Max flux after: {new_max_flux:.3f}")
+        logging.info("Rescaling completed.")
+
         if parameters.plot_rescaling:
-            self.plot_comparison( 
+            self.plot( 
             processed_label="Rescaled Spectrum", processed_color="indigo", processed_linestyle="-",display_type="processed")
         return self
         
-
-    def radial_velocity_shift(self, verbose=True):
+    def radial_velocity_shift(self, parameters, verbose=True):
         if verbose:
-            print("[radial_velocity_shift] Applying radial velocity shift")
+            logging.info(f"Applying radial velocity shift")
 
-    def resample_stochastic(self, verbose=True):
+    def resample_stochastic(self, parameters, verbose=True):
         if verbose:
-            print("[resample_stochastic] Resampling spectrum for stochastic process")
+            logging.info(f"Resampling spectrum for stochastic process")
 
     def generate_noise(self, parameters, verbose=True):
         """
@@ -258,32 +241,25 @@ class Spectrum:
             parameters (Parameters): Contains SNR and reference wavelength range.
             verbose (bool): If True, prints debug information and plots before/after noise application.
         """
-        if not parameters.apply_noise:
-            print("[convolve_spectrum] Skipping noise generation.")
-            return self
         original_spectrum = self.copy()
         
-        expected_noise_std = np.mean(np.sqrt(self.flux) / parameters.snr)
-
-        # Generate Poisson noise
-        noise = np.random.poisson(self.flux) - self.flux
-        noise /= parameters.snr
-        self.flux += noise  # Add noise to the flux
-
-        # Compute noise standard deviation for verification
-        noise_std = np.std(noise)
+        self.flux = np.random.poisson(self.flux)
 
         if verbose:
-            print(f"[generate_noise] Noise standard deviation: {noise_std:.3f} (Expected: {expected_noise_std:.3f})")
-            print(f"[generate_noise] Noise generation completed.")
+            measured_mean = np.mean(self.flux)
+            measured_std = np.std(self.flux)
+            estimated_snr = measured_mean / measured_std if measured_std > 0 else float("inf")
+
+            logging.info(f"Noise Generation Completed.")
+            logging.info(f"Mean: {measured_mean:.2f}, std: {measured_std:.2f}, estimated snr : {estimated_snr:.2f}")
 
         if parameters.plot_noise:
-            self.plot_comparison(
+            self.plot(
                 reference_spectrum=original_spectrum,
-                processed_label="Noisy Spectrum", processed_color="darkgreen", processed_linestyle="-",processed_linewidth=0.8, processed_zorder=2,
-                original_label="Spectrum", original_color="lightgreen", original_linestyle="-", original_linewidth=3.0, original_zorder=1)
+                processed_label="Noisy Spectrum", processed_color="darkgreen", processed_linestyle="-", processed_linewidth=0.8,
+                original_label="Ideal Spectrum", original_color="lightgreen", original_linestyle="-", original_linewidth=2.0
+            )
         return self
-
 
     def save_spectrum(self, output_file):
         """
@@ -295,7 +271,6 @@ class Spectrum:
         if self.wavelength.size == 0 or self.flux.size == 0:
             raise ValueError("No spectrum data to save. Ensure spectrum is processed before saving.")
 
-        np.savetxt(output_file, np.column_stack((self.wavelength, self.flux)), 
-                   header="Wavelength Flux", fmt="%.10f")
+        np.savetxt(output_file, np.column_stack((self.wavelength, self.flux)))
 
-        print(f"[save_spectrum] Spectrum saved to '{output_file}'.")
+        logging.info(f"Spectrum saved to '{output_file}'.")
