@@ -9,7 +9,8 @@ class Parameters(BaseModel, frozen=True):
     """
     #flat_spectrum.txt  dirac_spectrum.txt   gaia_055000450000.txt
     input_file: str = "gaia_055000450000.txt"
-    num_output_spectra: int = Field(1, ge= 1)
+    input_resolving_power: int = Field(300000, ge=1)  # Modify acoording to the spectra we use as input.
+    num_output_spectra: int = Field(2, ge= 1)
 
     convert_units: bool = True 
     
@@ -24,6 +25,11 @@ class Parameters(BaseModel, frozen=True):
 
     plot_rescaling: bool = True
     reference_range: Tuple[float, float] = (8550, 8650)
+
+    apply_trimming: bool = True
+    plot_trimming: bool = True
+    trimming_range: Tuple[float, float] = (8460, 8700)
+    trimming_margin: float = 1.0
 
     plot_noise: bool = True
     snr: float = Field(10, gt=0)
@@ -44,7 +50,6 @@ class Parameters(BaseModel, frozen=True):
 
             return cls()
     
-    # Inside your Parameters class
     def output_filename(self, index: int) -> str:
         import os
         base = os.path.splitext(os.path.basename(self.input_file))[0]

@@ -230,8 +230,48 @@ class Spectrum:
             logging.info(f"Applying radial velocity shift")
 
     def resample_stochastic(self, parameters, verbose=True):
+        """
+        Resample the spectrum for stochastic processes.
+        If trimming is enabled in parameters, trims the wavelength range around the target region before resampling.
+
+        Args:
+            parameters (Parameters): Object containing all simulation settings, including trimming options.
+            verbose (bool): If True, prints logging information about the process.
+        """
         if verbose:
             logging.info(f"Resampling spectrum for stochastic process")
+
+        if parameters.apply_trimming:
+            min_wavelength = parameters.trimming_range[0] - parameters.trimming_margin
+            max_wavelength = parameters.trimming_range[1] + parameters.trimming_margin
+
+            mask = (self.wavelength >= min_wavelength) & (self.wavelength <= max_wavelength)
+            trimmed_wavelength = self.wavelength[mask]
+            trimmed_flux = self.flux[mask]
+
+            if trimmed_wavelength.size == 0 or trimmed_flux.size == 0:
+                logging.error(f"No data found in trimming range {min_wavelength}-{max_wavelength} Å.")
+                return self
+
+            original_spectrum = self.copy()
+
+            self.wavelength = trimmed_wavelength
+            self.flux = trimmed_flux
+
+            logging.info(f"Trimmed wavelength range: {self.wavelength[0]:.2f} Å to {self.wavelength[-1]:.2f} Å")
+            logging.info(f"Number of points after trimming: {len(self.wavelength)}")
+
+            if parameters.plot_trimming:
+                self.plot(
+                    reference_spectrum=original_spectrum,
+                    processed_label="Trimmed Spectrum", processed_color="teal", processed_linestyle="-",
+                    original_label="Original Spectrum", original_color="lightgray", original_linestyle="--",
+                    display_type="both"
+                )
+
+        return self
+
+
 
     def generate_noise(self, parameters, verbose=True):
         """
@@ -261,7 +301,7 @@ class Spectrum:
             )
         return self
 
-    def save_spectrum(self, output_file):
+    def save_spectrum(self, base_name: str, snr: float, index: int):
         """
         Save the processed spectrum to a file.
 
@@ -270,7 +310,12 @@ class Spectrum:
         """
         if self.wavelength.size == 0 or self.flux.size == 0:
             raise ValueError("No spectrum data to save. Ensure spectrum is processed before saving.")
+    
+        snr_folder = os.path.join("outputs", f"SNR{int(snr)}")
+        filename = f"{base_name}_snr{int(snr)}_{index:04d}.txt"
+        full_path = os.path.join(snr_folder, filename)
 
-        np.savetxt(output_file, np.column_stack((self.wavelength, self.flux)))
+        os.makedirs(snr_folder, exist_ok=True)
+        np.savetxt(full_path, np.column_stack((self.wavelength, self.flux)))
 
-        logging.info(f"Spectrum saved to '{output_file}'.")
+        logging.info(f"Spectrum saved to '{full_path}'.")
