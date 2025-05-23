@@ -35,7 +35,7 @@ class Spectrum:
         Load input spectrum from a file and parse data.
         """
         try:
-            data = np.loadtxt(file_name, skiprows=1)
+            data = np.loadtxt(file_name)
             self.wavelength = data[:, 0]
             self.flux = data[:, 1]
             logging.info(f"Loaded spectrum from '{file_name}' successfully.")
@@ -77,9 +77,11 @@ class Spectrum:
         original_spectrum = self.copy()
         initial_flux = np.sum(self.flux)
 
-        fwhm_wavelength = np.mean(self.wavelength) / parameters.resolving_power
-        sigma_wavelength = fwhm_wavelength / (2 * np.sqrt(2 * np.log(2)))
-
+        delta_lambda = np.sqrt(
+            (np.mean(self.wavelength) / parameters.resolving_power)**2 -
+            (np.mean(self.wavelength) / parameters.input_resolving_power)**2
+        )
+        sigma_wavelength = delta_lambda / (2 * np.sqrt(2 * np.log(2)))
         lambda_step = np.mean(np.diff(self.wavelength))
         sigma_pixels = sigma_wavelength / lambda_step
 
@@ -96,31 +98,44 @@ class Spectrum:
         logging.info(f"[convolve_spectrum] Flux conservation ratio: {conservation_ratio:.6f}")
             
         if parameters.plot_convolution:
-            self.plot(reference_spectrum=original_spectrum, 
-                             processed_label="Convolved Spectrum", processed_color="red", processed_linestyle="-", 
-                             original_label="Original Spectrum", original_color="pink", original_linestyle="--")
-        return self
+            self.plot(
+                reference_spectrum=original_spectrum, 
+                processed_label="Convolved Spectrum", processed_color="red", processed_linestyle="-", 
+                original_label="Original Spectrum", original_color="pink", original_linestyle="--"
+            )
 
+        return self
 
 
     def resample_spectrum(self, parameters, verbose=True):
         """
         Resample the spectrum onto a new uniform wavelength grid based on pixel size.
 
+        If parameters.fixed_pixel_size is True, the pixel size uses the fixed value in parameters.pixel_size
+        Otherwise, it is calculated as: 
+            pixel_size = mean_wavelength / (3 * resolving_power)
         Args:
             parameters (Parameters): Object containing simulation parameters, including pixel size.
             verbose (bool): If True, prints debugging information.
         """
         original_spectrum = self.copy()
 
-        new_wavelength_grid = np.arange(self.wavelength[0], self.wavelength[-1], parameters.pixel_size)
+        if parameters.fixed_pixel_size:
+            pixel_size = parameters.pixel_size
+            logging.info(f"Using fixed pixel size: {pixel_size:.4f} Å")
+        else: 
+            pixel_size = np.mean(self.wavelength) / (3 * parameters.resolving_power)
         
+        new_wavelength_grid = np.arange(self.wavelength[0], self.wavelength[-1], pixel_size)
+
+
         interpolator = interp1d(self.wavelength, self.flux, kind="linear", bounds_error=False, fill_value=0)
         resampled_flux = interpolator(new_wavelength_grid)
 
         self.wavelength = new_wavelength_grid
-        self.flux = resampled_flux
 
+
+        self.flux = resampled_flux
 
         logging.info(f"Resampling completed.")
         logging.info(f"First: {self.wavelength[0]:.2f} Å, Center:{np.mean(self.wavelength)} Å, Last: {self.wavelength[-1]:.2f} Å")
@@ -132,7 +147,7 @@ class Spectrum:
                              original_label="Original Spectrum", original_color="lightblue", original_linestyle="-", original_linewidth=5,processed_linewidth=0.7)
             
             self.plot(reference_spectrum=original_spectrum, display_type="both",processed_color="blue", processed_linestyle="-",
-                             original_label="Original Spectrum", original_color="lightblue", original_linestyle="-", original_linewidth=5,processed_linewidth=0.7, zoom=(8550, 8650))
+                             original_label="Original Spectrum", original_color="lightblue", original_linestyle="-", original_linewidth=5,processed_linewidth=0.7, zoom=(10100, 10215))
 
         return self
     
@@ -194,36 +209,55 @@ class Spectrum:
     def rescale_flux(self, parameters, verbose=True):
         """
         Rescale the flux vertically based on a reference level.
+        Selects the max flux in the central region if no range is provided.
 
         Args:
-            reference_range (tuple): The wavelength range (min, max) to use for computing the reference level.
+            parameters (Parameters): Contains the reference range and SNR.
+            verbose (bool): If True, shows logs and plots.
         """
-        mask = (self.wavelength >= parameters.reference_range[0]) & (self.wavelength <= parameters.reference_range[1])
-        selected_flux = self.flux[mask]
+        if parameters.reference_range is not None:
+            min_ref, max_ref = parameters.reference_range
+            mask = (self.wavelength >= min_ref) & (self.wavelength <= max_ref)
+            selected_flux = self.flux[mask]
 
-        if selected_flux.size == 0:
-            logging.error("No flux values found in reference range: %f %f. Skipping rescaling." % (parameters.reference_range[0], parameters.reference_range[1]))
-            logging.error("First and last wavelengh is: %f %f" % (self.wavelength[0], self.wavelength[-1]))
-            return self
-
-
+            if selected_flux.size == 0:
+                logging.error("No flux found in specified reference range: %.2f-%.2f Å", min_ref, max_ref)
+                logging.error("Wavelength range: %.2f-%.2f Å", self.wavelength[0], self.wavelength[-1])
+                return self
+            reference_flux = np.percentile(selected_flux, 100)
         # Using 100th percentile for our synthetic spectra
         #For real spectra, percentile should depend on SNR.
-        self.reference_flux = np.percentile(selected_flux, 100)
-    
-        self.flux = (self.flux / self.reference_flux) * (parameters.snr **2)  
 
-        #to check
-        new_max_flux = np.max(self.flux[mask])
+        else:
+            
+            width = 0.2 * (self.wavelength[-1] - self.wavelength[0])  # 20% width
+            min_central = np.mean(self.wavelength) - width / 2
+            max_central = np.mean(self.wavelength) + width / 2
+            mask = (self.wavelength >= min_central) & (self.wavelength <= max_central)
+            selected_flux = self.flux[mask]
 
-        logging.info(f"Reference flux level before: {self.reference_flux:.3f}")
-        logging.info(f"Max flux after: {new_max_flux:.3f}")
-        logging.info("Rescaling completed.")
+            if selected_flux.size == 0:
+                logging.warning("Central region empty. Falling back to global max.")
+                reference_flux = np.max(self.flux)
+            else:
+                reference_flux = np.max(selected_flux)
+
+            logging.info("Selected central range: {:,.2f}–{:,.2f} Å".format(min_central, max_central))
+
+        self.reference_flux = reference_flux
+        self.flux = (self.flux / self.reference_flux) * (parameters.snr ** 2)
+
+        if verbose:
+            new_max_flux = np.max(self.flux)
+            logging.info(f"Reference flux used: {self.reference_flux:.3f}")
+            logging.info(f"Max flux after rescaling: {new_max_flux:.3f}")
+            logging.info("Rescaling completed.")
 
         if parameters.plot_rescaling:
-            self.plot( 
-            processed_label="Rescaled Spectrum", processed_color="indigo", processed_linestyle="-",display_type="processed")
+            self.plot(
+                processed_label="Rescaled Spectrum",processed_color="indigo", processed_linestyle="-", display_type="processed")
         return self
+
         
     def radial_velocity_shift(self, parameters, verbose=True):
         if verbose:
@@ -232,18 +266,24 @@ class Spectrum:
     def resample_stochastic(self, parameters, verbose=True):
         """
         Resample the spectrum for stochastic processes.
-        If trimming is enabled in parameters, trims the wavelength range around the target region before resampling.
 
-        Args:
-            parameters (Parameters): Object containing all simulation settings, including trimming options.
-            verbose (bool): If True, prints logging information about the process.
+        If trimming is enabled, apply a fixed wavelength window either from parameters
+        or calculated based on ±1000 km/s Doppler shift to ensure SPADES2 compatibility.
         """
         if verbose:
-            logging.info(f"Resampling spectrum for stochastic process")
+            logging.info("Resampling spectrum for stochastic process")
 
         if parameters.apply_trimming:
-            min_wavelength = parameters.trimming_range[0] - parameters.trimming_margin
-            max_wavelength = parameters.trimming_range[1] + parameters.trimming_margin
+            
+            if parameters.trimming_range is not None:
+                min_wavelength, max_wavelength = parameters.trimming_range
+                logging.info(f"Using manual trimming range: {min_wavelength:.2f}–{max_wavelength:.2f} Å")
+            else:
+    
+                margin = np.mean(self.wavelength) * 1000 / 299_792.458
+
+                min_wavelength = self.wavelength[0] + margin
+                max_wavelength = self.wavelength[-1] - margin
 
             mask = (self.wavelength >= min_wavelength) & (self.wavelength <= max_wavelength)
             trimmed_wavelength = self.wavelength[mask]
@@ -258,7 +298,7 @@ class Spectrum:
             self.wavelength = trimmed_wavelength
             self.flux = trimmed_flux
 
-            logging.info(f"Trimmed wavelength range: {self.wavelength[0]:.2f} Å to {self.wavelength[-1]:.2f} Å")
+            logging.info(f"Trimmed wavelength range: {self.wavelength[0]:,.2f} Å to {self.wavelength[-1]:,.2f} Å")
             logging.info(f"Number of points after trimming: {len(self.wavelength)}")
 
             if parameters.plot_trimming:
@@ -291,7 +331,7 @@ class Spectrum:
             estimated_snr = measured_mean / measured_std if measured_std > 0 else float("inf")
 
             logging.info(f"Noise Generation Completed.")
-            logging.info(f"Mean: {measured_mean:.2f}, std: {measured_std:.2f}, estimated snr : {estimated_snr:.2f}")
+            logging.info(f"Mean: {measured_mean:,.2f}, std: {measured_std:,.2f}, estimated snr : {estimated_snr:.2f}")
 
         if parameters.plot_noise:
             self.plot(
